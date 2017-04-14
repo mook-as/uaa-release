@@ -43,6 +43,14 @@ class MockProperty
     end
   end
 
+  def map(&blk)
+    results = []
+    each do
+      results << blk.call
+    end
+    results
+  end
+
   def sub(before, after)
     self
   end

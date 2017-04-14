@@ -1,7 +1,30 @@
 <%
   message = ''
 
-  # returns null if the property does not have a value
+  def insert_property(hash, uaa_path, value)
+    path_parts = uaa_path.split('.')
+    insert_property_interpolatable(hash, *path_parts, value)
+  end
+
+  # This method signature sucks but is needed when key names may contain periods.
+  # This includes any time we are interpolating values from the manifest into a
+  # uaa.yml key name
+  def insert_property_interpolatable(hash, *uaa_path_parts, value)
+    pointer = hash
+    uaa_path_parts.each_with_index do |key, index|
+      unless pointer.has_key?(key)
+        pointer[key] = Hash.new
+      end
+
+      if index == (uaa_path_parts.length - 1)
+        pointer[key] = value
+      end
+
+      pointer = pointer[key]
+    end
+    hash
+  end
+
   def p_opt(property)
     p(property, nil)
   end
@@ -12,27 +35,6 @@
 
   def render(params)
     YAML.dump(params, :indentation => 2)
-  end
-
-  # adds a nested value to a hash
-  # for example hash['top-level']['mid-level']['bottom-level'] = value
-  # add_value(hash, value, 'top-level', 'mid-level', 'bottom-level'))
-  def add_value(hash, value, *keys)
-    last_key = nil
-    keys.each_with_index do |key, index|
-      last_key = key
-      if index < keys.length - 1
-        sub_hash = hash[key]
-        if sub_hash.nil?
-          sub_hash = {}
-          hash[key] = sub_hash
-        elsif !(sub_hash.is_a?(Hash))
-          raise ArgumentError, 'Expected a hash for key:'+key+' in nested elements:'+keys.to_s
-        end
-        hash = sub_hash
-      end
-    end
-    hash[last_key] = value
   end
 
   def is_missing(hash, *keys)
@@ -65,80 +67,58 @@
 
   uaa_db = p_arr('uaadb.databases').find { |db| db['tag'] == 'uaa' }
   uaa_role = p_arr('uaadb.roles').find { |role| role['tag'] == 'admin' }
-  protocol = p('login.protocol')
   uaa_db_scheme = p('uaadb.db_scheme')
   issuer_uri = p('uaa.issuer', p('uaa.url'))
 
-  spring_profiles = p('uaadb.db_scheme')
-  if p_opt('uaa.ldap.enabled')
-    spring_profiles = spring_profiles + ',ldap'
-  end
+  params = { }
+  insert_property(params, 'name', 'uaa')
+  insert_property(params, 'disableInternalAuth', p('uaa.disableInternalAuth'))
+  insert_property(params, 'disableInternalUserManagement', p('uaa.disableInternalUserManagement'))
+  insert_property(params, 'issuer.uri', issuer_uri)
+  spring_profiles = p_opt('uaa.ldap.enabled') ? (p('uaadb.db_scheme') + ',ldap') : p('uaadb.db_scheme')
+  insert_property(params, 'spring_profiles', spring_profiles)
+  insert_property(params, 'logging.config', '/var/vcap/jobs/uaa/config/log4j.properties')
 
-  #simple properties
-  params = {
-    'name' => 'uaa',
-    'disableInternalAuth' => p('uaa.disableInternalAuth'),
-    'disableInternalUserManagement' => p('uaa.disableInternalUserManagement'),
-    'issuer' => {
-      'uri' => issuer_uri
-    },
-    'spring_profiles' => spring_profiles,
-    'logging' => {
-      'config' => '/var/vcap/jobs/uaa/config/log4j.properties'
-    },
-    'database' => {
-      'url' =>  "jdbc:#{p('uaadb.db_scheme')}://#{p('uaadb.address')}:#{p('uaadb.port')}/#{uaa_db['name']}",
-      'username' => uaa_role['name'],
-      'password' => uaa_role['password'],
-      'maxactive' => p('uaa.database.max_connections'),
-      'maxidle' => p('uaa.database.max_idle_connections'),
-      'minidle' => p('uaa.database.min_idle_connections'),
-      'removeabandoned' => p('uaa.database.remove_abandoned'),
-      'logabandoned' =>  p('uaa.database.log_abandoned'),
-      'abandonedtimeout' => p('uaa.database.abandoned_timeout')
-    },
-    'authentication' => {
-      'policy' => {
-        'lockoutAfterFailures' => p('uaa.authentication.policy.lockoutAfterFailures'),
-        'countFailuresWithinSeconds' => p('uaa.authentication.policy.countFailuresWithinSeconds'),
-        'lockoutPeriodSeconds' => p('uaa.authentication.policy.lockoutPeriodSeconds'),
-        'global' => {
-          'lockoutAfterFailures' => p('uaa.authentication.policy.global.lockoutAfterFailures'),
-          'countFailuresWithinSeconds' => p('uaa.authentication.policy.global.countFailuresWithinSeconds'),
-          'lockoutPeriodSeconds' => p('uaa.authentication.policy.global.lockoutPeriodSeconds'),
-         }
-      }
-    },
-    'password' => {
-      'policy' => {
-        'minLength' => p('uaa.password.policy.minLength'),
-        'maxLength' => p('uaa.password.policy.maxLength'),
-        'requireUpperCaseCharacter' => p('uaa.password.policy.requireUpperCaseCharacter'),
-        'requireLowerCaseCharacter' => p('uaa.password.policy.requireLowerCaseCharacter'),
-        'requireDigit' => p('uaa.password.policy.requireDigit'),
-        'requireSpecialCharacter' => p('uaa.password.policy.requireSpecialCharacter'),
-        'expirePasswordInMonths' => p('uaa.password.policy.expirePasswordInMonths'),
-        'global' => {
-          'minLength' => p('uaa.password.policy.global.minLength'),
-          'maxLength' => p('uaa.password.policy.global.maxLength'),
-          'requireUpperCaseCharacter' => p('uaa.password.policy.global.requireUpperCaseCharacter'),
-          'requireLowerCaseCharacter' => p('uaa.password.policy.global.requireLowerCaseCharacter'),
-          'requireDigit' => p('uaa.password.policy.global.requireDigit'),
-          'requireSpecialCharacter' => p('uaa.password.policy.global.requireSpecialCharacter'),
-          'expirePasswordInMonths' => p('uaa.password.policy.global.expirePasswordInMonths')
-        }
-      }
-    },
-    'zones' => {
-      'internal' => {
-        'hostnames' => {
-        }
-      }
-    }
-  }
-  params['delete'] = p('uaa.delete') if p_opt('uaa.delete')
+  insert_property(params, 'database.url', "jdbc:#{p('uaadb.db_scheme')}://#{p('uaadb.address')}:#{p('uaadb.port')}/#{uaa_db['name']}")
+  insert_property(params, 'database.username', uaa_role['name'])
+  insert_property(params, 'database.password', uaa_role['password'])
+  insert_property(params, 'database.maxactive', p('uaa.database.max_connections'))
+  insert_property(params, 'database.maxidle', p('uaa.database.max_idle_connections'))
+  insert_property(params, 'database.minidle', p('uaa.database.min_idle_connections'))
+  insert_property(params, 'database.removeabandoned', p('uaa.database.remove_abandoned'))
+  insert_property(params, 'database.logabandoned',  p('uaa.database.log_abandoned'))
+  insert_property(params, 'database.abandonedtimeout', p('uaa.database.abandoned_timeout'))
 
-  if uaa_db_scheme == 'sqlserver' then
+  insert_property(params, 'authentication.policy.lockoutAfterFailures', p('uaa.authentication.policy.lockoutAfterFailures'))
+  insert_property(params, 'authentication.policy.countFailuresWithinSeconds', p('uaa.authentication.policy.countFailuresWithinSeconds'))
+  insert_property(params, 'authentication.policy.lockoutPeriodSeconds', p('uaa.authentication.policy.lockoutPeriodSeconds'))
+
+  insert_property(params, 'authentication.policy.global.lockoutAfterFailures', p('uaa.authentication.policy.global.lockoutAfterFailures'))
+  insert_property(params, 'authentication.policy.global.countFailuresWithinSeconds', p('uaa.authentication.policy.global.countFailuresWithinSeconds'))
+  insert_property(params, 'authentication.policy.global.lockoutPeriodSeconds', p('uaa.authentication.policy.global.lockoutPeriodSeconds'))
+
+  insert_property(params, 'password.policy.minLength', p('uaa.password.policy.minLength'))
+  insert_property(params, 'password.policy.maxLength', p('uaa.password.policy.maxLength'))
+  insert_property(params, 'password.policy.requireUpperCaseCharacter', p('uaa.password.policy.requireUpperCaseCharacter'))
+  insert_property(params, 'password.policy.requireLowerCaseCharacter', p('uaa.password.policy.requireLowerCaseCharacter'))
+  insert_property(params, 'password.policy.requireDigit', p('uaa.password.policy.requireDigit'))
+  insert_property(params, 'password.policy.requireSpecialCharacter', p('uaa.password.policy.requireSpecialCharacter'))
+  insert_property(params, 'password.policy.expirePasswordInMonths', p('uaa.password.policy.expirePasswordInMonths'))
+
+  insert_property(params, 'password.policy.global.minLength', p('uaa.password.policy.global.minLength'))
+  insert_property(params, 'password.policy.global.maxLength', p('uaa.password.policy.global.maxLength'))
+  insert_property(params, 'password.policy.global.requireUpperCaseCharacter', p('uaa.password.policy.global.requireUpperCaseCharacter'))
+  insert_property(params, 'password.policy.global.requireLowerCaseCharacter', p('uaa.password.policy.global.requireLowerCaseCharacter'))
+  insert_property(params, 'password.policy.global.requireDigit', p('uaa.password.policy.global.requireDigit'))
+  insert_property(params, 'password.policy.global.requireSpecialCharacter', p('uaa.password.policy.global.requireSpecialCharacter'))
+  insert_property(params, 'password.policy.global.expirePasswordInMonths', p('uaa.password.policy.global.expirePasswordInMonths'))
+
+  insert_property(params, 'zones.internal.hostnames', {})
+
+
+  insert_property(params, 'delete', p('uaa.delete')) if p_opt('uaa.delete')
+
+  if uaa_db_scheme == 'sqlserver'
     params['database']['url'] = "jdbc:#{p('uaadb.db_scheme')}://#{p('uaadb.address')}:#{p('uaadb.port')};databaseName=#{uaa_db['name']}"
   end
 
@@ -147,85 +127,62 @@
     params['database']['caseinsensitive'] = case_insensitive
   end
 
+  if_p('uaa.jwt') do
+    insert_property(params, 'jwt.token.revocable', p('uaa.jwt.revocable'))
+    insert_property(params, 'jwt.token.policy.accessTokenValiditySeconds', p('uaa.jwt.policy.accessTokenValiditySeconds'))
+    insert_property(params, 'jwt.token.policy.refreshTokenValiditySeconds', p('uaa.jwt.policy.refreshTokenValiditySeconds'))
+    insert_property(params, 'jwt.token.policy.global.accessTokenValiditySeconds', p('uaa.jwt.policy.global.accessTokenValiditySeconds'))
+    insert_property(params, 'jwt.token.policy.global.refreshTokenValiditySeconds', p('uaa.jwt.policy.global.refreshTokenValiditySeconds'))
 
-  #token configuration and keys
-  if_p('uaa.jwt') do |not_used|
-    jwt = {
-      'token' => {
-        'revocable' => p('uaa.jwt.revocable'),
-        'policy' => {
-          'accessTokenValiditySeconds' => p('uaa.jwt.policy.accessTokenValiditySeconds'),
-          'refreshTokenValiditySeconds' => p('uaa.jwt.policy.refreshTokenValiditySeconds'),
-          'global' => {
-            'accessTokenValiditySeconds' => p('uaa.jwt.policy.global.accessTokenValiditySeconds'),
-            'refreshTokenValiditySeconds' => p('uaa.jwt.policy.global.refreshTokenValiditySeconds')
-          }
-        }
-      }
-    }
-    if_p('uaa.jwt.policy.active_key_id') do |activeKeyId|
-      add_value(jwt,activeKeyId, 'token', 'policy', 'activeKeyId')
+    if_p('uaa.jwt.policy.active_key_id') do |active_key_id|
+      insert_property(params, 'jwt.token.policy.activeKeyId', active_key_id)
     end
 
     if_p('uaa.jwt.policy.keys') do |jwtKeys|
-      keys = {}
-      jwtKeys.each do |kid,keyPair|
-        next unless keyPair
-        keys[kid] = {}
-        keyPair.each do |keyProperty,value|
-          keys[kid][keyProperty] = value
-        end
-      end
-      jwt['token']['policy']['keys'] = keys
+      insert_property(params, 'jwt.token.policy.keys', jwtKeys)
     end
 
     if_p('uaa.jwt.claims.exclude') do |exclusions|
-      add_value(jwt, exclusions, 'token', 'claims', 'exclude')
+      insert_property(params, 'jwt.token.claims.exclude', exclusions)
     end
 
     if_p('uaa.jwt.signing_key') do |signingKey|
-      add_value(jwt, signingKey, 'token','signing-key')
+      insert_property(params, 'jwt.token.signing-key', signingKey)
     end
 
     if_p('uaa.jwt.verification_key') do |verificationKey|
-      add_value(jwt, verificationKey, 'token','verification-key')
+      insert_property(params, 'jwt.token.verification-key', verificationKey)
     end
 
-    add_value(jwt, p('uaa.jwt.refresh.restrict_grant'), 'token', 'refresh', 'restrict_grant')
-    add_value(jwt, p('uaa.jwt.refresh.unique'), 'token', 'refresh', 'unique')
+    insert_property(params, 'jwt.token.refresh.restrict_grant', p('uaa.jwt.refresh.restrict_grant'))
+    insert_property(params, 'jwt.token.refresh.unique', p('uaa.jwt.refresh.unique'))
 
     refresh_token_format = p('uaa.jwt.refresh.format')
     valid_formats = ['opaque', 'jwt']
     if valid_formats.include?(refresh_token_format)
-      add_value(jwt, refresh_token_format, 'token', 'refresh', 'format')
+      insert_property(params, 'jwt.token.refresh.format', refresh_token_format)
     else
       message = message +  "\nuaa.jwt.refresh.format #{refresh_token_format} must be one of #{valid_formats}"
     end
-
-    params['jwt'] = jwt
   end
 
-
-  # oauth settings
-  oauth = {
-    'clients' => {},
-    'user' => {}
-  }
-  params['oauth'] = oauth
-
-  if protocol == 'https'
-    add_value(oauth, true, 'authorize', 'ssl')
+  if p('login.protocol') == 'https'
+    insert_property(params, 'oauth.authorize.ssl', true)
   end
 
   if_p('uaa.clients') do |clients|
     clients.each do |id,client|
-      next unless client
+
+      # todo grot -- doc mode requires this for now even though its dumb
       client_data = {}
       client.each do |key,value|
         client_data[key] = value
       end
-      add_value(oauth, client_data, 'clients', id)
-      add_value(oauth, id, 'clients', id, 'id')
+      # todo end grot
+
+      insert_property_interpolatable(params, 'oauth', 'clients', id, client_data)
+      insert_property_interpolatable(params, 'oauth', 'clients', id, 'id', id)
+
       if is_missing(client_data, 'authorized-grant-types')
         message = message + "\nMissing property: uaa.clients.#{id}.authorized-grant-types"
       else
@@ -249,65 +206,45 @@
 
   #default admin client
   unless p_opt('uaa.clients.admin')
-    oauth['clients']['admin'] = {}
-    oauth['clients']['admin']['authorized-grant-types'] = 'client_credentials'
-    oauth['clients']['admin']['authorities'] = 'clients.read,clients.write,clients.secret,uaa.admin,scim.read,scim.write,password.write'
-    oauth['clients']['admin']['id'] = 'admin'
-    oauth['clients']['admin']['secret'] = p_opt('uaa.admin.client_secret')
+    insert_property(params, 'oauth.clients.admin', {})
+    insert_property(params, 'oauth.clients.admin.authorized-grant-types', 'client_credentials')
+    insert_property(params, 'oauth.clients.admin.authorities', 'clients.read,clients.write,clients.secret,uaa.admin,scim.read,scim.write,password.write')
+    insert_property(params, 'oauth.clients.admin.id', 'admin')
+    insert_property(params, 'oauth.clients.admin.secret', p_opt('uaa.admin.client_secret'))
   end
 
-  oauth['user']['authorities'] = p('uaa.user.authorities')
+  insert_property(params, 'oauth.user.authorities', p('uaa.user.authorities'))
 
-  scim = {
-    'userids_enabled' => p('uaa.scim.userids_enabled'),
-    'user' => {
-      'override' => p('uaa.scim.user.override')
-    }
-  }
-
-  params['scim'] = scim
+  insert_property(params, 'scim.userids_enabled', p('uaa.scim.userids_enabled'))
+  insert_property(params, 'scim.user.override', p('uaa.scim.user.override'))
+  scim = params['scim'] #todo grot
 
   #bootstrapped users
   if_p('uaa.scim.users') do |users|
-    userlist = []
-    users.each do |user|
-      usr_name = user['name']
-      usr_password = user['password'] || ''
-      usr_fname = user['firstName'] || ''
-      usr_lname = user['lastName'] || ''
-      usr_email = user['email'] || usr_name
-      usr_origin = user['origin'] || 'uaa'
-      usr_groups = ''
-      if user['groups'] then usr_groups = user['groups'].join(',') end
-      userlist.push(usr_name + '|' + usr_password + '|' + usr_email + '|' + usr_fname + '|' + usr_lname + '|' + usr_groups + '|' + usr_origin)
+    userlist = users.map do |user|
+      username = user['name']
+      password = user['password']
+      fname = user['firstName']
+      lname = user['lastName']
+      email = user['email'] || username
+      origin = user['origin'] || 'uaa'
+      groups = user['groups'] ? user['groups'].join(',') : ''
+      "#{username}|#{password}|#{email}|#{fname}|#{lname}|#{groups}|#{origin}"
     end
-    scim['users'] = userlist
+    insert_property(params, 'scim.users', userlist)
   end
 
-  #bootstrapped groups
   if_p('uaa.scim.groups') do |groups|
-    groupdata = {}
-    groups.each do |group_name, group_desc|
-      groupdata[group_name] = group_desc
-    end
-    scim['groups'] = groupdata
+    insert_property(params, 'scim.groups', groups)
   end
 
-
-  #bootstrapped external groups
   if_p('uaa.scim.external_groups') do |externalGroups|
     if externalGroups.is_a? Array
+      #todo untested
       scim['external_groups'] = externalGroups
     else
-      scim['external_groups'] = {}
       externalGroups.each do |origin, mappings|
-        scim['external_groups'][origin] = {}
-        mappings.each do |external, groups|
-          scim['external_groups'][origin][external] = []
-          groups.each do |group|
-            scim['external_groups'][origin][external].push(group)
-          end
-        end
+        insert_property(params, "scim.external_groups.#{origin}", mappings)
       end
     end
   end
@@ -321,90 +258,72 @@
   p_arr('uaa.zones.internal.hostnames').each do |hostname|
     internal_hostnames.push(hostname)
   end
-  params['zones']['internal']['hostnames'] = internal_hostnames
+  insert_property(params, 'zones.internal.hostnames', internal_hostnames)
 
   if p_opt('uaa.ldap.enabled')
-    ldap = {
-      'ldapdebug' => 'Ldap configured through UAA',
-      'profile' => {
-        'file' => "ldap/ldap-#{p_opt('uaa.ldap.profile_type')}.xml"
-       },
-      'ssl' => {
-        'skipverification' => p('uaa.ldap.ssl.skipverification'),
-        'tls' => p('uaa.ldap.ssl.tls')
-      },
-      'base' => {
-        'url' => p_opt('uaa.ldap.url'),
-        'mailAttributeName' => p_opt('uaa.ldap.mailAttributeName'),
-        'mailSubstitute' => p_opt('uaa.ldap.mailSubstitute'),
-        'mailSubstituteOverridesLdap' => p_opt('uaa.ldap.mailSubstituteOverridesLdap'),
-        'referral' => p_opt('uaa.ldap.referral')
-      },
-      'addShadowUserOnLogin' => p('uaa.ldap.add_shadow_user_on_login')
-    }
+    insert_property(params, 'ldap.ldapdebug', 'Ldap configured through UAA')
+    insert_property(params, 'ldap.profile.file', "ldap/ldap-#{p_opt('uaa.ldap.profile_type')}.xml")
+    insert_property(params, 'ldap.ssl.skipverification', p('uaa.ldap.ssl.skipverification'))
+    insert_property(params, 'ldap.ssl.tls', p('uaa.ldap.ssl.tls'))
+    insert_property(params, 'ldap.base.url', p_opt('uaa.ldap.url'))
+    insert_property(params, 'ldap.base.mailAttributeName', p_opt('uaa.ldap.mailAttributeName'))
+    insert_property(params, 'ldap.base.mailSubstitute', p_opt('uaa.ldap.mailSubstitute'))
+    insert_property(params, 'ldap.base.mailSubstituteOverridesLdap', p_opt('uaa.ldap.mailSubstituteOverridesLdap'))
+    insert_property(params, 'ldap.base.referral', p_opt('uaa.ldap.referral'))
+    insert_property(params, 'ldap.addShadowUserOnLogin', p('uaa.ldap.add_shadow_user_on_login'))
+
     unless p_opt('uaa.ldap.sslCertificate').nil?
-      ldap['ssl']['sslCertificate'] = p_opt('uaa.ldap.sslCertificate')
-      unless p_opt('uaa.ldap.sslCertificateAlias').nil?
-        ldap['ssl']['sslCertificateAlias'] = p_opt('uaa.ldap.sslCertificateAlias')
-      end
+      insert_property(params, 'ldap.ssl.sslCertificate', p_opt('uaa.ldap.sslCertificate'))
     end
+    unless p_opt('uaa.ldap.sslCertificateAlias').nil?
+        insert_property(params, 'ldap.ssl.sslCertificateAlias', p_opt('uaa.ldap.sslCertificateAlias'))
+    end
+
+    ldap = params['ldap'] #todo grot
     if p_opt('uaa.ldap.profile_type') == 'simple-bind'
+      # todo untested
       ldap['base']['userDnPattern'] = p_opt('uaa.ldap.userDNPattern')
       ldap['base']['userDnPatternDelimiter'] = p_opt('uaa.ldap.userDNPatternDelimiter')
     else
-      ldap['base']['userDn'] = p_opt('uaa.ldap.userDN')
-      ldap['base']['password'] = p_opt('uaa.ldap.userPassword')
-      ldap['base']['searchBase'] = p_opt('uaa.ldap.searchBase')
-      ldap['base']['searchFilter'] = p_opt('uaa.ldap.searchFilter')
+      insert_property(params, 'ldap.base.userDn', p_opt('uaa.ldap.userDN'))
+      insert_property(params, 'ldap.base.password', p_opt('uaa.ldap.userPassword'))
+      insert_property(params, 'ldap.base.searchBase', p_opt('uaa.ldap.searchBase'))
+      insert_property(params, 'ldap.base.searchFilter', p_opt('uaa.ldap.searchFilter'))
     end
     if p_opt('uaa.ldap.profile_type') == 'search-and-compare'
+      #todo untested
       ldap['base']['passwordAttributeName'] = p_opt('uaa.ldap.passwordAttributeName')
       ldap['base']['passwordEncoder'] = p_opt('uaa.ldap.passwordEncoder')
       ldap['base']['localPasswordCompare'] = p_opt('uaa.ldap.localPasswordCompare')
     end
 
-
     if_p('uaa.ldap.emailDomain') do |emailDomains|
-      ldap['emailDomain'] = []
-      emailDomains.each do |domain|
-        ldap['emailDomain'].push(domain)
-      end
+      insert_property(params, 'ldap.emailDomain', emailDomains)
     end
 
     if_p('uaa.ldap.attributeMappings') do |attributeMappings|
-      ldap['attributeMappings'] = {}
-      attributeMappings.each do |key,val|
-        ldap['attributeMappings'][key] = val
-      end
+      insert_property(params, 'ldap.attributeMappings', attributeMappings)
     end
 
     if_p('uaa.ldap.externalGroupsWhitelist') do |whitelist|
-      ldap['externalGroupsWhitelist'] = []
-      whitelist.each do |group|
-        ldap['externalGroupsWhitelist'].push(group)
-      end
+      insert_property(params, 'ldap.externalGroupsWhitelist', whitelist)
     end
-    ldap['groups'] = {}
+
     if p('uaa.ldap.groups.profile_type') == 'no-groups'
-      ldap['groups']['file'] = 'ldap/ldap-groups-null.xml'
+      file = 'ldap/ldap-groups-null.xml'
     else
-      ldap['groups']['file'] = "ldap/ldap-#{p('uaa.ldap.groups.profile_type')}.xml"
+      file = "ldap/ldap-#{p('uaa.ldap.groups.profile_type')}.xml"
     end
-    ldap['groups']['searchBase'] = p('uaa.ldap.groups.searchBase')
-    ldap['groups']['groupRoleAttribute'] = p('uaa.ldap.groups.groupRoleAttribute')
-    ldap['groups']['groupSearchFilter'] = p('uaa.ldap.groups.groupSearchFilter')
-    ldap['groups']['searchSubtree'] = p('uaa.ldap.groups.searchSubtree')
-    ldap['groups']['maxSearchDepth'] = p('uaa.ldap.groups.maxSearchDepth')
-    params['ldap'] = ldap
+    insert_property(params, 'ldap.groups.file', file)
+    insert_property(params, 'ldap.groups.searchBase', p('uaa.ldap.groups.searchBase'))
+    insert_property(params, 'ldap.groups.groupRoleAttribute', p('uaa.ldap.groups.groupRoleAttribute'))
+    insert_property(params, 'ldap.groups.groupSearchFilter', p('uaa.ldap.groups.groupSearchFilter'))
+    insert_property(params, 'ldap.groups.searchSubtree', p('uaa.ldap.groups.searchSubtree'))
+    insert_property(params, 'ldap.groups.maxSearchDepth', p('uaa.ldap.groups.maxSearchDepth'))
   end
 
   if_p('uaa.servlet.session-cookie') do |sessioncookie|
-    params['servlet'] = {
-      'session-cookie' => {}
-    }
-    sessioncookie.each do |cookiename, cookievalue|
-      params['servlet']['session-cookie'][cookiename] = cookievalue
-    end
+    insert_property(params, 'servlet.session-cookie', sessioncookie)
   end
 
   #validate that we have all required parameters
@@ -412,10 +331,10 @@
      if is_missing params, 'jwt', 'token', 'policy', 'activeKeyId'
        message = message + '\nMissing property: uaa.jwt.policy.active_key_id'
      else
-       activeKeyId = params['jwt']['token']['policy']['activeKeyId']
-       if is_missing params, 'jwt', 'token', 'policy', 'keys', activeKeyId
+       active_key_id = params['jwt']['token']['policy']['activeKeyId']
+       if is_missing params, 'jwt', 'token', 'policy', 'keys', active_key_id
          message = message + '\nMissing property: uaa.jwt.policy.active_key_id mismatch'
-       elsif is_missing params, 'jwt', 'token', 'policy', 'keys', activeKeyId, 'signingKey'
+       elsif is_missing params, 'jwt', 'token', 'policy', 'keys', active_key_id, 'signingKey'
            message = message + '\nMissing property: uaa.jwt.policy.active_key_id missing signingKey'
        end
      end
@@ -424,124 +343,92 @@
   protocol = p('login.protocol')
 
   uaa_base = p('uaa.url')
+  entity_base_url_fallback = uaa_base.sub('://uaa.', '://login.')
 
-  entity_base_url_fallback = uaa_base.sub("://uaa.", "://login.")
-
-  login_entityBaseUrl = nil
+  login_entity_base_url = nil
   if_p('login.saml.entity_base_url') do |entity_base_url|
-    login_entityBaseUrl = "#{protocol}://#{entity_base_url}"
+    login_entity_base_url = "#{protocol}://#{entity_base_url}"
   end .else do
-    login_entityBaseUrl = entity_base_url_fallback
+    login_entity_base_url = entity_base_url_fallback
   end
 
-  login_entityId = p(['login.saml.entityid'], login_entityBaseUrl.sub(/^http.*:\/\//,''))
+  login_entity_id = p(['login.saml.entityid'], login_entity_base_url.sub(/^http.*:\/\//,''))
 
-  login_authorizeUrl = "#{p('uaa.url', entity_base_url_fallback)}/oauth/authorize"
+  login_authorize_url = "#{p('uaa.url', entity_base_url_fallback)}/oauth/authorize"
 
-  login_url = p('login.url', login_entityBaseUrl)
+  login_url = p('login.url', login_entity_base_url)
 
-  params = params.merge({
-    'require_https' => p('uaa.require_https'),
-    'assetBaseUrl' => p('login.asset_base_url'),
-    'logout' => {
-      'redirect' => {
-        'url' => p('login.logout.redirect.url'),
-        'parameter' => {
-          'disable' => p('login.logout.redirect.parameter.disable')
-        }
-      }
-    },
-    'uaa' => {
-      'url' => uaa_base
-    },
-    'links' => p_arr('login.links'),
-    'login' => {
-      'url' => login_url,
-      'idpDiscoveryEnabled' => p('login.idpDiscoveryEnabled'),
-      'accountChooserEnabled' => p('login.idpDiscoveryEnabled'),
-      'entityBaseURL' => login_entityBaseUrl,
-      'entityID' => login_entityId,
-      'prompt' => {
-        'username' => {
-          'text' => p('login.prompt.username.text')
-        },
-        'password' => {
-          'text' => p('login.prompt.password.text')
-        }
-      },
-      'authorize' => {
-        'url' => login_authorizeUrl
-      },
-      'saml' => {
-        'socket' => {
-          'connectionManagerTimeout' => p_opt('login.saml.socket.connectionManagerTimeout'),
-          'soTimeout' => p_opt('login.saml.socket.soTimeout')
-        }
-      }
-    }
-  })
+  insert_property(params, 'require_https', p('uaa.require_https'))
+  insert_property(params, 'assetBaseUrl', p('login.asset_base_url'))
+  insert_property(params, 'uaa.url', uaa_base)
+  insert_property(params, 'links', p_arr('login.links'))
 
-  add_value(params, p('login.logout.redirect.parameter.whitelist'), 'logout', 'redirect', 'parameter', 'whitelist') if p_opt('login.logout.redirect.parameter.whitelist')
+  insert_property(params, 'logout.redirect.url', p('login.logout.redirect.url'))
+  insert_property(params, 'logout.redirect.parameter.disable', p('login.logout.redirect.parameter.disable'))
+  insert_property(params, 'logout.redirect.parameter.whitelist', p('login.logout.redirect.parameter.whitelist')) if p_opt('login.logout.redirect.parameter.whitelist')
+
+  insert_property(params, 'login.url', login_url)
+  insert_property(params, 'login.idpDiscoveryEnabled', p('login.idpDiscoveryEnabled'))
+  insert_property(params, 'login.accountChooserEnabled', p('login.idpDiscoveryEnabled'))
+  insert_property(params, 'login.entityBaseURL', login_entity_base_url)
+  insert_property(params, 'login.entityID', login_entity_id)
+  insert_property(params, 'login.prompt.username.text', p('login.prompt.username.text'))
+  insert_property(params, 'login.prompt.password.text', p('login.prompt.password.text'))
+  insert_property(params, 'login.authorize.url', login_authorize_url)
+  insert_property(params, 'login.saml.socket.connectionManagerTimeout', p_opt('login.saml.socket.connectionManagerTimeout'))
+  insert_property(params, 'login.saml.socket.soTimeout', p_opt('login.saml.socket.soTimeout'))
 
   if_p('login.smtp') do |login_smtp|
     login_smtp.each do |key,val|
-      add_value(params, val, 'smtp', key)
+      insert_property_interpolatable(params, 'smtp', key, val)
     end
   end
 
-  add_value(params, p('login.notifications.url'), 'notifications', 'url') if p_opt('login.notifications.url')
+  insert_property(params, 'notifications.url', p('login.notifications.url')) if p_opt('login.notifications.url')
 
-  add_value(params, p('login.branding.company_name'), 'login', 'branding', 'companyName') if p_opt('login.branding.company_name')
-  add_value(params, p('login.branding.product_logo'), 'login', 'branding', 'productLogo') if p_opt('login.branding.product_logo')
-  add_value(params, p('login.branding.square_logo'), 'login', 'branding', 'squareLogo') if p_opt('login.branding.square_logo')
-  add_value(params, p('login.branding.footer_legal_text'), 'login', 'branding', 'footerLegalText') if p_opt('login.branding.footer_legal_text')
-  add_value(params, p('login.branding.footer_links'), 'login', 'branding', 'footerLinks') if p_opt('login.branding.footer_links')
+  insert_property(params, 'login.branding.companyName', p('login.branding.company_name')) if p_opt('login.branding.company_name')
+  insert_property(params, 'login.branding.productLogo', p('login.branding.product_logo')) if p_opt('login.branding.company_name')
+  insert_property(params, 'login.branding.squareLogo', p('login.branding.square_logo')) if p_opt('login.branding.square_logo')
+  insert_property(params, 'login.branding.footerLegalText', p('login.branding.footer_legal_text')) if p_opt('login.branding.footer_legal_text')
+  insert_property(params, 'login.branding.footerLinks', p('login.branding.footer_links')) if p_opt('login.branding.footer_links')
 
-  add_value(params, p('login.home_redirect'), 'login', 'homeRedirect') if p_opt('login.home_redirect')
+  insert_property(params, 'login.homeRedirect', p('login.home_redirect')) if p_opt('login.home_redirect')
 
-  add_value(params, p('login.saml.serviceProviderCertificate'), 'login', 'serviceProviderCertificate') if p_opt('login.saml.serviceProviderCertificate')
-  add_value(params, p('login.saml.serviceProviderKey'), 'login', 'serviceProviderKey') if p_opt('login.saml.serviceProviderKey')
-  add_value(params, p('login.saml.serviceProviderKeyPassword'), 'login', 'serviceProviderKeyPassword') if p_opt('login.saml.serviceProviderKeyPassword')
+  insert_property(params, 'login.serviceProviderCertificate', p('login.saml.serviceProviderCertificate')) if p_opt('login.saml.serviceProviderCertificate')
+  insert_property(params, 'login.serviceProviderKey', p('login.saml.serviceProviderKey')) if p_opt('login.saml.serviceProviderKey')
+  insert_property(params, 'login.serviceProviderKeyPassword', p('login.saml.serviceProviderKeyPassword')) if p_opt('login.saml.serviceProviderKeyPassword')
 
-  add_value(params, p('login.self_service_links_enabled'), 'login', 'selfServiceLinksEnabled')
+  insert_property(params, 'login.selfServiceLinksEnabled', p('login.self_service_links_enabled'))
 
   if_p('login.oauth.providers') do |providers|
-    providers.each do |idpAlias, provider|
-      provider.each do |key,value|
-        if key.to_s.eql?('attributeMappings') then
-          value.each do |k,v|
-            add_value(params, v, 'login', 'oauth', 'providers', idpAlias, 'attributeMappings', k)
-          end
-        else
-          add_value(params, value, 'login', 'oauth', 'providers', idpAlias, key)
-        end
-      end
-    end
+    insert_property(params, 'login.oauth.providers', providers)
   end
 
-  add_value(params, p('login.saml.signMetaData'), 'login', 'saml', 'signMetaData') if p_opt('login.saml.signMetaData')
-  add_value(params, p('login.saml.signRequest'), 'login', 'saml', 'signRequest') if p_opt('login.saml.signRequest')
-  add_value(params, p('login.saml.wantAssertionSigned'), 'login', 'saml', 'wantAssertionSigned')
-  if_p('login.saml.signatureAlgorithm') { |alg| add_value(params, alg, 'login', 'saml', 'signatureAlgorithm') }
+  insert_property(params, 'login.saml.signMetaData', p('login.saml.signMetaData')) if p_opt('login.saml.signMetaData')
+  insert_property(params, 'login.saml.signRequest', p('login.saml.signRequest')) if p_opt('login.saml.signRequest')
+  insert_property(params, 'login.saml.wantAssertionSigned', p('login.saml.wantAssertionSigned'))
+
+  if_p('login.saml.signatureAlgorithm') { |alg| insert_property(params, 'login.saml.signatureAlgorithm', alg) }
 
   if_p('login.saml.providers') do |samlProviders|
+    # Reject here doesn't seem tested
     samlProviders.reject {|k,_| k.to_s == ''}.each do |idpAlias,idpProvider|
       idpProvider.reject {|k,_| %w(idpMetadata).include?(k.to_s)}.each do |key,value|
-        if key.to_s.eql?('attributeMappings') then
+        if key.to_s.eql?('attributeMappings')
           value.each do |akey,aval|
-            add_value(params, aval, 'login', 'saml', 'providers', idpAlias, 'attributeMappings', akey)
+            insert_property_interpolatable(params, 'login', 'saml', 'providers', idpAlias, 'attributeMappings', akey, aval)
           end
         else
-          add_value(params, value, 'login', 'saml', 'providers', idpAlias, key)
+          insert_property_interpolatable(params, 'login', 'saml', 'providers', idpAlias, key, value)
         end
       end
-      add_value(params, idpProvider['idpMetadata'], 'login', 'saml', 'providers', idpAlias, 'idpMetadata')
+      insert_property_interpolatable(params, 'login', 'saml', 'providers', idpAlias, 'idpMetadata', idpProvider['idpMetadata'])
     end
   end
 
   if_p('login.analytics.code', 'login.analytics.domain') do |code, domain|
-    add_value(params, code, 'analytics', 'code')
-    add_value(params, domain, 'analytics', 'domain')
+    insert_property(params, 'analytics.code', code)
+    insert_property(params, 'analytics.domain', domain)
   end
 
   #validate that we have all required parameters

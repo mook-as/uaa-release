@@ -75,7 +75,7 @@ module DocOverrides
 
     structured = {}
     result.keys.sort.each do |k|
-      add_value(structured, result[k], *k.split('.'))
+      insert_property(structured, k, result[k])
     end
 
     JSON.dump structured
