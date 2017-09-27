@@ -267,12 +267,10 @@ properties:
     description: "The Location of the redirect header following a logout of the the UAA (/logout.do)."
     default: /login
   login.logout.redirect.parameter.disable:
-    description: "When set to false, this allows an operator to leverage an open redirect on the UAA (/logout.do?redirect=google.com). No open redirect enabled"
-    default: true
+    description: "Deprecated. This property is no longer used by the UAA. Logout redirects should be configured using login.logout.redirect.parameter.whitelist"
+    default: false
   login.logout.redirect.parameter.whitelist:
-    description: "A list of URLs. When this list is non null, including empty, and disable=false,
-    logout redirects are allowed, but limited to the whitelist URLs. If a redirect parameter value is not white
-    listed, redirect will be to the default URL."
+    description: "A list of URLs. Custom redirect after user log out must be contained in this whitelist. Non-whitelisted urls will be ignored and the user will be redirected to the value of logout.redirect.url."
   login.prompt.username.text:
     description: "The text used to prompt for a username during login"
     default: Email
