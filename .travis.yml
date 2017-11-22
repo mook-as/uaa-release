@@ -41,6 +41,7 @@ cache:
   directories:
   - $HOME/.gradle
   - $HOME/.rvm/gems
+  - /var/lib/docker
 
 before_install:
 - mkdir -p $HOME/.gradle
